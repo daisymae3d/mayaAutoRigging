@@ -1,0 +1,299 @@
+from maya import cmds
+from maya import mel
+
+def autoRigger():
+	def createSkeleton():
+		valid_strings = ["_Pelvis", "_Midsection", "_UpperTorso", "_Head", 
+		"_Calf_Left", "_Thigh_Left", "_Foot_Left", "_Calf_Right", "_Thigh_Right", 
+		"_Foot_Right", "_Shoulder_Left", "_Forearm_Left", "_Hand_Left", "_Shoulder_Right", 
+		"_Forearm_Right", "_Hand_Right"
+		]
+		geoSel = cmds.ls(sl=True)
+		geo = cmds.ls(g=True)
+		joints = cmds.ls(typ='joint')
+		gMainWindow = mel.eval('$tmpVar=$gMainWindow')
+		
+		if len(joints) > 0:
+			cmds.confirmDialog(icn = 'warning', button = ('OK'),  dismissString='No', m = "Already pre-existing joints in the scene. Please remove these joints.", p=gMainWindow)
+			cmds.select(cl=True)
+			return
+
+		if not geoSel:
+			cmds.confirmDialog(icn = 'warning', button = ('OK'),  dismissString='Cancel', m = "No mesh selected.", p = gMainWindow)
+			return
+	
+		for geo in geoSel:
+			cancelled = 0
+			confirmed = 1
+			
+			if cancelled == confirmed:
+				break	
+
+			if not any(valid_str in geo for valid_str in valid_strings) and cancelled == 0:
+				nameWarning = cmds.confirmDialog(icn = 'warning', button = ('Confirm', 'Cancel'), defaultButton='Confirm', 
+					cancelButton='Cancel', dismissString='No', p=gMainWindow, 
+					m = f"Object '{geo}' doesn't contain correct naming convention, or isn't part of the body mesh. Would you still like to continue? Joint creation will be skipped for this mesh.")
+				
+				if nameWarning == 'Cancel':
+					print('Operation cancelled.')
+					return cancelled == 1
+
+				elif nameWarning == 'Confirm':
+					cancelled = 0 
+					breakpoint()
+					continue # Skip this mesh and move to the next one
+
+		piv = cmds.xform(geo, q=True, piv=True, ws=True)   
+		cmds.select(clear=True)
+		skinJoint = cmds.joint(p=piv[0:3], n=geo + '%s' % "_jnt", rad=3)
+		cmds.joint(edit=True, orientJoint='xyz', roo='xyz', secondaryAxisOrient='yup', children=True, zeroScaleOrient=True)
+		cmds.select(clear=True)
+
+		cmds.joint(a=True, n='root_jnt', rad=3)
+		cmds.select(clear=True)
+
+		joint_hierarchy = [
+			("*_Pelvis_jnt", 'root_jnt'),
+			("*_Midsection_jnt", "*_Pelvis_jnt"),
+			("*_UpperTorso_jnt", "*_Midsection_jnt"),
+			("*_Head_jnt", "*_UpperTorso_jnt"),
+			("*_Thigh_Left_jnt", "*_Pelvis_jnt"),
+			("*_Calf_Left_jnt", "*_Thigh_Left_jnt"),
+			("*_Foot_Left_jnt", "*_Calf_Left_jnt"),
+			("*_Thigh_Right_jnt", "*_Pelvis_jnt"),
+			("*_Calf_Right_jnt", "*_Thigh_Right_jnt"),
+			("*_Foot_Right_jnt", "*_Calf_Right_jnt"),
+			("*_Shoulder_Left_jnt", "*_UpperTorso_jnt"),
+			("*_Forearm_Left_jnt", "*_Shoulder_Left_jnt"),
+			("*_Hand_Left_jnt", "*_Forearm_Left_jnt"),
+			("*_Shoulder_Right_jnt", "*_UpperTorso_jnt"),
+			("*_Forearm_Right_jnt", "*_Shoulder_Right_jnt"),
+			("*_Hand_Right_jnt", "*_Forearm_Right_jnt")
+		]
+
+		for child_pattern, parent_pattern in joint_hierarchy:
+			if parent_pattern:
+				cmds.select(cmds.ls(child_pattern, type='joint'))
+				cmds.select(cmds.ls(parent_pattern, type='joint'), add=True)
+				cmds.parent(child_pattern, parent_pattern)
+				cmds.select(clear=True)
+			else:
+				cmds.select(cmds.ls(child_pattern, type='joint'))
+				cmds.delete()
+				cmds.select(clear=True)
+
+
+		cmds.select('*_Midsection_jnt', hi=True)
+		cmds.select('root_jnt',"*_Pelvis_jnt", d=True)
+		cmds.joint(edit=True, orientJoint='xyz', roo='xyz', secondaryAxisOrient='yup', 
+			children=True, zeroScaleOrient=True)
+		cmds.select(cl=True)
+		cmds.select(cmds.ls(type="joint"))
+		cmds.joint(edit=True, zeroScaleOrient=True)
+		cmds.makeIdentity(apply=True, rotate=True)
+		cmds.select(cl=True)
+
+		jnt_grp = cmds.group(empty=True, name='jnt_grp')
+		cmds.select('root_jnt', 'jnt_grp')
+		cmds.parent()
+		cmds.select(cl=True)
+
+	def createRigControllers():
+		root = 'root_jnt'
+		jntSel = cmds.ls(sl=True) 
+
+		if not cmds.objExists(root):
+			cmds.confirmDialog(icn = 'warning', button = ('OK'),  dismissString='No', m = "No existing root_jnt in scene.", p = gMainWindow)
+			return
+		cmds.select(cmds.ls(type="joint"))
+		for joint in jntSel:
+			joint_translate = cmds.xform(joint, query=True, translation=True, worldSpace=True)
+			joint_rotate = cmds.xform(joint, query=True, rotation=True, worldSpace=True)
+			
+			ctrlName = joint.replace("_jnt", "_ctrl")
+			newCircl = cmds.circle(nr=(0,1,0), c=(0, 0, 0), r=0.2, n=ctrlName)
+			cmds.xform(newCircl, translation=joint_translate, worldSpace=True)
+			cmds.orientConstraint(joint, newCircl, mo=False)
+			cmds.delete(cmds.orientConstraint(newCircl, mo=False))
+			cmds.bakePartialHistory(newCircl,query=True,prePostDeformers=True )
+			cmds.bakePartialHistory(newCircl,prePostDeformers=True )
+			cmds.makeIdentity(apply=True, translate=True)
+
+	
+			shapeNode = cmds.listRelatives(ctrlName, shapes=True)[0]
+			cmds.setAttr(f"{shapeNode}.overrideEnabled", 1)
+			cmds.setAttr(f"{shapeNode}.overrideColor", 13)
+
+
+		cmds.select(cl=True)
+		cmds.select('*_Midsection_ctrl', '*_UpperTorso_ctrl')
+		cmds.rotate(0,  '90deg', 0,)
+		cmds.makeIdentity(apply=True, translate=True)
+
+
+		cmds.select(cl=True)
+		cmds.select('*_Hand_Left_ctrl', '*_Hand_Right_ctrl','*_Forearm_Left_ctrl','*_Forearm_Right_ctrl', '*_Shoulder_Left_ctrl','*_Shoulder_Right_ctrl')
+		cmds.rotate(0, 0, '90deg')
+		cmds.makeIdentity(apply=True, translate=True)
+		cmds.select(cl=True)
+
+		cmds.circle(nr=(0,1,0), c=(0, 0, 0), r=1.0, n='main_ctrl')
+		cmds.setAttr('main_ctrl' + ".overrideEnabled", 1)
+		cmds.setAttr('main_ctrl' + ".overrideColor", 13)
+		cmds.circle(nr=(0,1,0), c=(0, 0, 0), r=0.8, n='offset_ctrl')
+		cmds.setAttr('offset_ctrl' + ".overrideEnabled", 1)
+		cmds.setAttr('offset_ctrl' + ".overrideColor", 17)
+		cmds.parentConstraint('offset_ctrl', 'root_jnt', mo=False)
+
+		cmds.select(cl=True)
+		print("Controllers Created.")
+
+	def parent_to_group():
+		curves = cmds.ls(type='nurbsCurve', ni=True, o=True, r=True, l = True)
+		curves_transforms = cmds.listRelatives(curves, p=True, type = "transform")
+		cmds.select(curves_transforms)
+		curveSel = cmds.ls(curves_transforms)
+		
+		if not curveSel:
+			cmds.warning("No object selected.")
+			return
+		
+		for obj in curveSel:
+			group_name = obj.replace("_ctrl", "_offset")
+			group_node = cmds.group(empty=True, name=group_name)
+			
+			cmds.parent(group_node, obj)
+			cmds.makeIdentity(group_node, apply=True, translate=True, rotate=True, scale=True, normal=False)
+			cmds.parent(group_node, world=True)
+			cmds.parent(obj, group_node)
+			
+		constrain_hierarchy = [
+			("*_Pelvis_ctrl", '*_Pelvis_jnt'),
+			("*_Midsection_ctrl", "*_Midsection_jnt"),
+			("*_UpperTorso_ctrl", "*_UpperTorso_jnt"),
+			("*_Head_ctrl", "*_Head_jnt"),
+			("*_Thigh_Left_ctrl", "*_Thigh_Left_jnt"),
+			("*_Calf_Left_ctrl", "*_Calf_Left_jnt"),
+			("*_Foot_Left_ctrl", "*_Foot_Left_jnt"),
+			("*_Thigh_Right_ctrl", "*_Thigh_Right_jnt"),
+			("*_Calf_Right_ctrl", "*_Calf_Right_jnt"),
+			("*_Foot_Right_ctrl", "*_Foot_Right_jnt"),
+			("*_Shoulder_Left_ctrl", "*_Shoulder_Left_jnt"),
+			("*_Forearm_Left_ctrl", "*_Forearm_Left_jnt"),
+			("*_Hand_Left_ctrl", "*_Hand_Left_jnt"),
+			("*_Shoulder_Right_ctrl", "*_Shoulder_Right_jnt"),
+			("*_Forearm_Right_ctrl", "*_Forearm_Right_jnt"),
+			("*_Hand_Right_ctrl", "*_Hand_Right_jnt")
+		]
+		for child_pattern, parent_pattern in constrain_hierarchy:
+				cmds.parentConstraint(child_pattern, parent_pattern, mo=False, weight=1)
+
+		cmds.rename('offset_offset', "offset_grp")
+		cmds.rename('main_offset', "ctrl_grp")
+		cmds.select(cl=True)
+		cmds.select(cl=True)
+		print(f"Parented controls to respective offset groups.")
+
+
+		control_hierarchy = [
+			("*_Pelvis_offset", 'offset_ctrl'),
+			("*_Midsection_offset", "*_Pelvis_ctrl"),
+			("*_UpperTorso_offset", "*_Midsection_ctrl"),
+			("*_Head_offset", "*_UpperTorso_ctrl"),
+			("*_Thigh_Left_offset", "*_Pelvis_ctrl"),
+			("*_Calf_Left_offset", "*_Thigh_Left_ctrl"),
+			("*_Foot_Left_offset", "*_Calf_Left_ctrl"),
+			("*_Thigh_Right_offset", "*_Pelvis_ctrl"),
+			("*_Calf_Right_offset", "*_Thigh_Right_ctrl"),
+			("*_Foot_Right_offset", "*_Calf_Right_ctrl"),
+			("*_Shoulder_Left_offset", "*_UpperTorso_ctrl"),
+			("*_Forearm_Left_offset", "*_Shoulder_Left_ctrl"),
+			("*_Hand_Left_offset", "*_Forearm_Left_ctrl"),
+			("*_Shoulder_Right_offset", "*_UpperTorso_ctrl"),
+			("*_Forearm_Right_offset", "*_Shoulder_Right_ctrl"),
+			("*_Hand_Right_offset", "*_Forearm_Right_ctrl")
+		]
+
+		for child_pattern, parent_pattern in control_hierarchy:
+			if parent_pattern:
+				child = cmds.ls(child_pattern, type='transform')
+				parent = cmds.ls(parent_pattern, type='transform')
+				if child and parent:
+					cmds.select(child)
+					cmds.select(parent, add=True)
+					cmds.parent()
+					cmds.select(clear=True)
+			else:
+				child = cmds.ls(child_pattern, type='transform')
+				if child:
+					cmds.select(child)
+					cmds.delete()
+					cmds.select(clear=True)
+		cmds.parent('offset_grp', 'main_ctrl')
+
+	def skinRig():
+		skinJoints = cmds.ls(type="joint")
+		joint = cmds.select(cmds.ls(type="joint"))
+
+		#cmds.listConnections(t='skinCluster')
+
+		for joint in skinJoints:
+
+			skin_hierarchy = [
+				("*_Pelvis", '*_Pelvis_jnt'),
+				("*_Midsection", "*_Midsection_jnt"),
+				("*_UpperTorso", "*_UpperTorso_jnt"),
+				("*_Head", "*_Head_jnt"),
+				("*_Thigh_Left", "*_Thigh_Left_jnt"),
+				("*_Calf_Left", "*_Calf_Left_jnt"),
+				("*_Foot_Left", "*_Foot_Left_jnt"),
+				("*_Thigh_Right", "*_Thigh_Right_jnt"),
+				("*_Calf_Right", "*_Calf_Right_jnt"),
+				("*_Foot_Right", "*_Foot_Right_jnt"),
+				("*_Shoulder_Left", "*_Shoulder_Left_jnt"),
+				("*_Forearm_Left", "*_Forearm_Left_jnt"),
+				("*_Hand_Left", "*_Hand_Left_jnt"),
+				("*_Shoulder_Right", "*_Shoulder_Right_jnt"),
+				("*_Forearm_Right", "*_Forearm_Right_jnt"),
+				("*_Hand_Right", "*_Hand_Right_jnt")
+			]
+			for child_pattern, parent_pattern in skin_hierarchy:
+				cmds.skinCluster(child_pattern, parent_pattern, tsb=True, bm=3, mi=1, nw=1, wd=0, omi=True, dr=4, rui=True, hmf= 0.2, sm=0)
+		
+		constrain_hierarchy = [
+			("*_Pelvis_ctrl", '*_Pelvis_jnt'),
+			("*_Midsection_ctrl", "*_Midsection_jnt"),
+			("*_UpperTorso_ctrl", "*_UpperTorso_jnt"),
+			("*_Head_ctrl", "*_Head_jnt"),
+			("*_Thigh_Left_ctrl", "*_Thigh_Left_jnt"),
+			("*_Calf_Left_ctrl", "*_Calf_Left_jnt"),
+			("*_Foot_Left_ctrl", "*_Foot_Left_jnt"),
+			("*_Thigh_Right_ctrl", "*_Thigh_Right_jnt"),
+			("*_Calf_Right_ctrl", "*_Calf_Right_jnt"),
+			("*_Foot_Right_ctrl", "*_Foot_Right_jnt"),
+			("*_Shoulder_Left_ctrl", "*_Shoulder_Left_jnt"),
+			("*_Forearm_Left_ctrl", "*_Forearm_Left_jnt"),
+			("*_Hand_Left_ctrl", "*_Hand_Left_jnt"),
+			("*_Shoulder_Right_ctrl", "*_Shoulder_Right_jnt"),
+			("*_Forearm_Right_ctrl", "*_Forearm_Right_jnt"),
+			("*_Hand_Right_ctrl", "*_Hand_Right_jnt")
+		]
+		for child_pattern, parent_pattern in constrain_hierarchy:
+				cmds.parentConstraint(child_pattern, parent_pattern, mo=False, weight=1)
+
+	cmds.undoInfo(openChunk=True)
+	createSkeleton()
+	cmds.select(cmds.ls(type="joint"))
+	cmds.select('root_jnt', d=True)
+	cmds.undoInfo(closeChunk=True)
+	cmds.undoInfo(openChunk=True)
+	createRigControllers()
+	cmds.undoInfo(closeChunk=True)
+	cmds.undoInfo(openChunk=True)
+	parent_to_group()
+	cmds.undoInfo(closeChunk=True)
+	cmds.undoInfo(openChunk=True)
+	skinRig()
+	cmds.undoInfo(closeChunk=True)
+
+autoRigger()

@@ -11,10 +11,6 @@ def parent_to_group():
     for obj in sel:
         group_name = obj + ("_offset")
         group_node = cmds.group(empty=True, name=group_name)
-
-        if cmds.objExists(group_name):
-            cmds.warning("Name already exists for offset group.")
-            break
         
         cmds.parent(group_node, obj)
         
@@ -23,6 +19,15 @@ def parent_to_group():
         cmds.parent(group_node, world=True)
         
         cmds.parent(obj, group_node)
+
+        if group_node == 'offset_ctrl_offset' :
+            cmds.rename('offset_ctrl_offset', 'offset_grp')
+        
+        elif group_node == 'main_ctrl_offset':
+            cmds.rename('main_ctrl_offset', 'ctrl_grp')
+        
+        else:
+            pass
         
         print(f"Parented {obj} to {group_node}")
 

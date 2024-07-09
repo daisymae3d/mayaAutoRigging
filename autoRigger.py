@@ -32,15 +32,14 @@ class SkelCreator:
         geo_sel = cmds.ls(sl=True)
         if len(cmds.ls(type='joint')) > 0:
             cmds.confirmDialog(icn = 'warning', button = ('OK'),  dismissString='No',
-            m = "Already pre-existing joints in the scene.\
-                Please remove these joints.", parent=gMainWindow)
+            m = "Already pre-existing joints in the scene. Please remove these joints.", parent=gMainWindow)
             cmds.select(cl=True)
             return
 
         if not geo_sel:
             cmds.confirmDialog(icn = 'warning', button = ('OK'),
             dismissString='Cancel', m = "No mesh selected.", parent=gMainWindow)
-            return
+            return None
         if self.invalid_names(geo_sel):
             return
         for geo in geo_sel:
@@ -83,7 +82,7 @@ class JointHierarchy:
             ]
     def create_joint_hierarchy(self):
         '''Parenting the joints to create the skeleton hierarchy'''
-        for child_pattern, parent_pattern in self.joint_hierarchy:
+        for child_pattern , parent_pattern in self.joint_hierarchy:
             if parent_pattern:
                 cmds.select(cmds.ls(child_pattern, type='joint'))
                 cmds.select(cmds.ls(parent_pattern, type='joint'), add=True)
@@ -133,29 +132,21 @@ class ControlRig:
         
             ctrl_name = joint.replace("_jnt", "_ctrl")
             new_circl = cmds.circle(nr=(0,1,0), c=(0, 0, 0), r=0.2, n=ctrl_name)
-            cmds.xform(new_circl, translation=joint_translate, worldSpace=True)
+            cmds.xform(new_circl, translation=joint_translate, worldSpace=True)#
             cmds.orientConstraint(joint, new_circl, mo=False)
             cmds.delete(cmds.orientConstraint(new_circl, mo=False))
+            cmds.parentConstraint(new_circl, joint, mo=False)
             cmds.bakePartialHistory(new_circl,query=True,prePostDeformers=True )
             cmds.bakePartialHistory(new_circl,prePostDeformers=True )
             cmds.makeIdentity(apply=True, translate=True)
-
+            cmds.transformLimits(tx = (0, 0),ty = (0, 0),tz = (0, 0), etx=(True, True), ety=(True, True), etz=(True, True ))
+            cmds.transformLimits(sx = (1, 1),sy = (1, 1),sz = (1, 1), esx=(True, True), esy=(True, True), esz=(True, True ))
 
             shape_node = cmds.listRelatives(ctrl_name, shapes=True)[0]
             cmds.setAttr(f"{shape_node}.overrideEnabled", 1)
             cmds.setAttr(f"{shape_node}.overrideColor", 13)
+        cmds.delete('root_ctrl')
 
-
-        cmds.select(cl=True)
-        cmds.select('*_Midsection_ctrl', '*_UpperTorso_ctrl')
-        cmds.rotate(0,  '90deg', 0,)
-        cmds.makeIdentity(apply=True, translate=True)
-
-
-        cmds.select(cl=True)
-        cmds.select('*_Hand_Left_ctrl', '*_Hand_Right_ctrl','*_Forearm_Left_ctrl','*_Forearm_Right_ctrl', '*_Shoulder_Left_ctrl','*_Shoulder_Right_ctrl')
-        cmds.rotate(0, 0, '90deg')
-        cmds.makeIdentity(apply=True, translate=True)
         cmds.select(cl=True)
 
         cmds.circle(nr=(0,1,0), c=(0, 0, 0), r=1.0, n='main_ctrl')
@@ -169,26 +160,26 @@ class ControlRig:
         cmds.select(cl=True)
         print("Controllers Created.")
 
-    create_rig_controllers(self)
+controlRig = ControlRig()
+controlRig.create_rig_controllers()
 
-#class offsetGroup:
-    cmds.select(cmds.ls(type='nurbsCurve', ni=True, o=True, r=True, l = True))
+class OffsetGroup:
     def __init__(offset):
-        offset.curves = cmds.ls(sl=True)
+        offset.curves = cmds.ls(type='nurbsCurve', ni=True, o=True, r=True, l = True)
         offset.transforms = cmds.listRelatives(offset.curves, p=True, type = "transform")
+        cmds.select(offset.transforms)
         offset.curveSel = cmds.ls(offset.transforms)
     
 
-    def parent_to_group(offset, curveSel):
-        print('debug')
+    def parent_to_group(offset):
         for offset.curves in offset.curveSel:
-            group_name = obj.replace("_ctrl", "_offset")
+            group_name = offset.curves.replace("_ctrl", "_offset")
             group_node = cmds.group(empty=True, name=group_name)
-            
+
             cmds.parent(group_node, offset.curves)
             cmds.makeIdentity(group_node, apply=True, translate=True, rotate=True, scale=True, normal=False)
             cmds.parent(group_node, world=True)
-            cmds.parent(offset.obj, group_node)
+            cmds.parent(offset.curves, group_node)
             
         constrain_hierarchy = [
             ("*_Pelvis_ctrl", '*_Pelvis_jnt'),
@@ -215,7 +206,6 @@ class ControlRig:
         cmds.rename('main_offset', "ctrl_grp")
         cmds.select(cl=True)
         cmds.select(cl=True)
-        print(f"Parented controls to respective offset groups.")
 
 
         control_hierarchy = [
@@ -252,18 +242,35 @@ class ControlRig:
                     cmds.select(child)
                     cmds.delete()
                     cmds.select(clear=True)
-
+        print(f"Parented controls to respective offset groups.")
         cmds.parent('offset_grp', 'main_ctrl')
-class skinningRig:
+offsetGroup = OffsetGroup()
+offsetGroup.parent_to_group()
+
+class SkinningRig:
     def __init__(skinRig):
-        pass
-    def skinRig(skinRig):
+        skinRig.joint = cmds.select(cmds.ls(type="joint"))
+        skinRig.geo = cmds.ls(g=True)
+
+    def find_existing_skinCluster(skinRig, geo):
+        history = cmds.listHistory(geo)
+        skinClusters = cmds.ls(history, type='skinCluster')
+        if skinClusters:
+            return skinClusters[0]
+        return None
+
+    def skin_mesh(skinRig):
         skinJoints = cmds.ls(type="joint")
-        joint = cmds.select(cmds.ls(type="joint"))
-
-        #cmds.listConnections(t='skinCluster')
-
-        for joint in skinJoints:
+        mesh = skinRig.geo
+            
+        # for geo in mesh:
+        #     existing_skinCluster = skinRig.find_existing_skinCluster(geo)
+        #     if existing_skinCluster:
+        #         print(f"Mesh {geo} already has a skinCluster: {existing_skinCluster}")
+        #         continue
+        #     cmds.skinCluster(skinJoints, geo, bm=1, sm=0, dr=5)
+        #     print(f"Skinned {geo} with new skinCluster.")
+        for skinRig.joint in skinJoints:
 
             skin_hierarchy = [
                 ("*_Pelvis", '*_Pelvis_jnt'),
@@ -284,8 +291,7 @@ class skinningRig:
                 ("*_Hand_Right", "*_Hand_Right_jnt")
             ]
             for child_pattern, parent_pattern in skin_hierarchy:
-                    cmds.skinCluster(child_pattern, parent_pattern, tsb=True, bm=3, mi=1, nw=1, wd=0, omi=True, dr=4, rui=True, hmf= 0.2, sm=0)
-        
+                cmds.skinCluster(child_pattern, parent_pattern, tsb=True, bm=3, mi=1, nw=1, wd=0, omi=True, dr=4, rui=True, hmf= 0.2, sm=0)
         constrain_hierarchy = [
             ("*_Pelvis_ctrl", '*_Pelvis_jnt'),
             ("*_Midsection_ctrl", "*_Midsection_jnt"),
@@ -306,3 +312,9 @@ class skinningRig:
         ]
         for child_pattern, parent_pattern in constrain_hierarchy:
                 cmds.parentConstraint(child_pattern, parent_pattern, mo=False, weight=1)
+skinningRig = SkinningRig()
+skinningRig.skin_mesh()
+
+
+#select -r HK_Enemy_D_Hand_Right_ctrl.cv[0:7] ;
+#rotate -r -p -69.632981cm 147.913552cm -5.993093cm -os -fo 0 0 -90.000007 ;
